@@ -1,0 +1,87 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description:
+  Template to provision EC2 instance
+
+Parameters:
+  VpcId:
+    Type: String
+
+  Subnets:
+    Type: List<AWS::EC2::Subnet::Id>
+
+  KeyName:
+    Type: String
+
+  ImageId:
+    Type: String
+    Default: ami-0e472933a1395e172
+
+Resources:
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+        GroupDescription: Allow http to client host
+        VpcId: !Ref VpcId
+        SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 5000
+          ToPort: 5000
+          CidrIp: 0.0.0.0/0
+
+  JenkinsInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      BlockDeviceMappings:
+        - Ebs:
+            VolumeSize: 16
+            VolumeType: gp2
+            DeleteOnTermination: true
+            Encrypted: true
+          DeviceName: /dev/xvdcz
+      InstanceType: t3a.micro
+      ImageId: !Ref ImageId
+      KeyName: !Ref KeyName
+      SecurityGroupIds:
+        - !Ref InstanceSecurityGroup
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash -xe
+            while true ; do
+              ping -c1 google.com > /dev/null && break
+            done
+            # configure machine (cfn-init)
+            /opt/aws/bin/cfn-init \
+              --region ${AWS::Region} \
+              --stack ${AWS::StackName} \
+              --resource JenkinsInstance \
+              --configsets bootstrap \
+              --verbose
+    Metadata:
+      AWS::CloudFormation::Init:
+        configSets:
+          bootstrap:
+            - setup
+        setup:
+          packages:
+            yum:
+              docker: []
+              git: []
+          commands:
+            01_start_docker:
+              command: service docker start
+            02_configure_jenkins_repo:
+              command: sudo wget -O /etc/yum.repos.d/jenkins.repo https://pkg.jenkins.io/redhat/jenkins.repo && sudo rpm --import https://pkg.jenkins.io/redhat/jenkins.io.key
+            03_install_jenkins:
+              command: sudo yum -y update && sudo yum -y install jenkins java-1.8.0-openjdk-devel && sudo systemctl start jenkins
+            04_start_docker_registry:
+              command: sudo docker run -d -p 5000:5000 --restart=always --name registry registry:2

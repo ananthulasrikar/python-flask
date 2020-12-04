@@ -1,0 +1,5 @@
+[
+      { "ParameterKey": "VpcId", "ParameterValue": "vpc-2a7c504e" },
+      { "ParameterKey": "Subnets", "ParameterValue": "subnet-0ee7b46a, subnet-8489e2f2, subnet-3440f56c, subnet-6290b44a" },
+      { "ParameterKey": "KeyName", "ParameterValue": "rewind" }
+]
