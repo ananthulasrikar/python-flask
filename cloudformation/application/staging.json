@@ -1,0 +1,7 @@
+[
+    { "ParameterKey": "SSLCertificateId", "ParameterValue": "arn:aws:iam::143595175678:server-certificate/rewind-flask-server-cert" },
+    { "ParameterKey": "VpcId", "ParameterValue": "vpc-2a7c504e" },
+    { "ParameterKey": "TopicARN", "ParameterValue": "arn:aws:sns:us-west-2:143595175678:rewind-topic" },
+    { "ParameterKey": "Subnets", "ParameterValue": "subnet-0ee7b46a, subnet-8489e2f2, subnet-3440f56c, subnet-6290b44a" },
+    { "ParameterKey": "Environment", "ParameterValue": "staging" }
+]

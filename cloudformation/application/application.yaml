@@ -1,0 +1,213 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description:
+  Template to provision EC2 instance
+
+#################################################
+# Mappings
+#################################################
+Mappings:
+  SettingByEnvironment:
+    staging:
+      InstanceType: t3a.micro
+    production:
+      InstanceType: t3.micro
+
+#################################################
+# Parameters
+#################################################
+Parameters:
+  VpcId:
+    Type: String
+
+  KeyName:
+    Type: String
+    Default: rewind
+
+  Subnets:
+    Type: List<AWS::EC2::Subnet::Id>
+
+  SSLCertificateId:
+    Type: String
+
+  ImageId:
+    Type: String
+    Default: ami-0e472933a1395e172
+
+  Environment:
+    Type: String
+    AllowedValues:
+      - staging
+      - production
+
+  TopicARN:
+    Type: String
+
+#################################################
+# Resources
+#################################################
+Resources:
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+        GroupDescription: Allow http to client host
+        VpcId: !Ref VpcId
+        SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+
+# launch template for auto scaling group
+  flaskLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub ${AWS::StackName}-launch-template
+      LaunchTemplateData:
+        BlockDeviceMappings:
+          - Ebs:
+              VolumeSize: 8
+              VolumeType: gp2
+              DeleteOnTermination: true
+              Encrypted: true
+            DeviceName: /dev/xvdcz
+        ImageId: !Ref ImageId
+        InstanceType: !FindInMap [SettingByEnvironment, !Ref Environment, InstanceType]
+        KeyName: !Ref KeyName
+        Monitoring:
+          Enabled: true
+        SecurityGroupIds:
+          - !Ref InstanceSecurityGroup
+        UserData:
+          Fn::Base64:
+            !Sub |
+              #!/bin/bash -xe
+              while true ; do
+                ping -c1 google.com > /dev/null && break
+              done
+              # configure machine (cfn-init)
+              /opt/aws/bin/cfn-init \
+                --region ${AWS::Region} \
+                --stack ${AWS::StackName} \
+                --resource flaskLaunchTemplate \
+                --configsets bootstrap \
+                --verbose
+    Metadata:
+      AWS::CloudFormation::Init:
+        configSets:
+          bootstrap:
+            - rewind
+        rewind:
+          packages:
+            yum:
+              docker: []
+              python: []
+              git: []
+
+# creating auto scaling group using launch configuration above
+  flaskAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: flaskAsg
+      MinSize: "2"
+      MaxSize: "3"
+      DesiredCapacity: "2"
+      HealthCheckGracePeriod: 300
+      LaunchTemplate:
+        LaunchTemplateId: !Ref flaskLaunchTemplate
+        Version: !GetAtt flaskLaunchTemplate.LatestVersionNumber
+      LoadBalancerNames:
+        - !Ref flaskLoadBalancer
+      VPCZoneIdentifier: !Ref Subnets
+      NotificationConfiguration:
+        TopicARN: !Ref TopicARN
+        NotificationTypes:
+          - autoscaling:EC2_INSTANCE_LAUNCH
+          - autoscaling:EC2_INSTANCE_LAUNCH_ERROR
+          - autoscaling:EC2_INSTANCE_TERMINATE
+          - autoscaling:EC2_INSTANCE_TERMINATE_ERROR
+      MetricsCollection:
+        - Granularity: "1Minute"
+          Metrics:
+            - "GroupMinSize"
+            - "GroupMaxSize"
+# if triggered add 1 machine to cluster
+  ClusterScaleUp:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AdjustmentType: ChangeInCapacity
+      AutoScalingGroupName: !Ref flaskAutoScalingGroup
+      ScalingAdjustment: 1
+
+# allow all tcp/443 traffic
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      GroupDescription: Allow inbound only on tcp 443
+
+# creating load balancer for the application
+  flaskLoadBalancer:
+    Type: AWS::ElasticLoadBalancing::LoadBalancer
+    Properties:
+      Subnets: !Ref Subnets
+      SecurityGroups:
+      - !Ref InstanceSecurityGroup
+      CrossZone: true
+      Listeners:
+      - InstancePort: '80'
+        InstanceProtocol: HTTP
+        LoadBalancerPort: '443'
+        Protocol: HTTPS
+        SSLCertificateId: !Ref SSLCertificateId
+      HealthCheck:
+        Target: HTTP:80/
+        HealthyThreshold: '2'
+        UnhealthyThreshold: '3'
+        Interval: '10'
+        Timeout: '5'
+
+#################################################
+# Alarm
+#################################################
+  AlarmOnHighCpuUtilization:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Scale-up if CPU > 1% for 1 minutes
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      AlarmActions:
+        - !Ref ClusterScaleUp
+        - !Ref TopicARN
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref flaskAutoScalingGroup
+      ComparisonOperator: GreaterThanThreshold
+
+#################################################
+# Outputs
+#################################################
+Outputs:
+  EnvironmentOutput:
+    Description: Environment
+    Value: !Ref Environment
+  LoadBalancer:
+    Description: DNSName of the LoadBalancer
+    Value: !GetAtt flaskLoadBalancer.DNSName
