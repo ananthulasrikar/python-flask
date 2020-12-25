@@ -20,13 +20,13 @@
 	  --certificate-body file://server.crt --private-key file://server.key
 
 #### get aws sertificate arn
-	arn:aws:iam::143595175678:server-certificate/rewind-flask-server-cert
+	arn:aws:iam::xxxx:server-certificate/rewind-flask-server-cert
 	# this value to be used in cloudformation/application/parameters.json
 	cd cloudformation/application
 	aws iam list-server-certificates|jq -r '.ServerCertificateMetadataList[].Arn'
 
 # create topic
-	# expected output: arn:aws:sns:us-west-2:143595175678:rewind-topic
+	# expected output: arn:aws:sns:us-west-2:xxxx:rewind-topic
 	# this value to be used in cloudformation/application/parameters.json
 	cd cloudformation/application
 	aws sns create-topic --name rewind-topic| jq -r '.TopicArn'
@@ -34,7 +34,7 @@
 # create subscription for email alerts
 	cd cloudformation/application
 	aws sns subscribe \
-	--topic-arn arn:aws:sns:us-west-2:143595175678:rewind-topic \
+	--topic-arn arn:aws:sns:us-west-2:xxxx:rewind-topic \
 	--protocol email \
 	--notification-endpoint "xxxxxx@gmail.com"
 
